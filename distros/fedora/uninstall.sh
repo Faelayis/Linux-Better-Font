@@ -7,6 +7,8 @@ readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 . "$SCRIPT_DIR/common.sh"
 
 configure_scope "$@"
+ui_header 'Uninstall'
+ui_scope
 check_fedora
 require_command fc-cache
 uninstall_fix

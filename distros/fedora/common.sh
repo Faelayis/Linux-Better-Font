@@ -17,8 +17,91 @@ declare -a NOTO_SERIF_FAMILIES=()
 declare -a NOTO_MONO_FAMILIES=()
 declare -a NOTO_OTHER_FAMILIES=()
 
+UI_BOLD=''
+UI_DIM=''
+UI_CYAN=''
+UI_GREEN=''
+UI_YELLOW=''
+UI_RED=''
+UI_RESET=''
+UI_BULLET='-'
+UI_INFO='*'
+UI_OK='+'
+UI_SKIP='-'
+UI_FAIL='X'
+
+unicode_enabled() {
+    local charmap
+    charmap=$(locale charmap 2>/dev/null) || return 1
+    charmap=${charmap,,}
+    [[ "$charmap" == 'utf-8' || "$charmap" == 'utf8' ]]
+}
+
+if unicode_enabled; then
+    UI_BULLET='•'
+    UI_INFO='●'
+    UI_OK='✓'
+    UI_SKIP='−'
+    UI_FAIL='✗'
+fi
+
+color_enabled() {
+    [[ -t "$1" && -z "${NO_COLOR+x}" && "${TERM:-dumb}" != 'dumb' ]]
+}
+
+if color_enabled 1; then
+    UI_BOLD=$'\033[1m'
+    UI_DIM=$'\033[2m'
+    UI_CYAN=$'\033[36m'
+    UI_GREEN=$'\033[32m'
+    UI_YELLOW=$'\033[33m'
+    UI_RED=$'\033[31m'
+    UI_RESET=$'\033[0m'
+fi
+
+ui_header() {
+    printf '\n%bLinux Better Font%b  %b%s%b  %b%s%b\n' \
+        "$UI_BOLD" "$UI_RESET" "$UI_DIM" "$UI_BULLET" "$UI_RESET" "$UI_BOLD" "$1" "$UI_RESET"
+}
+
+ui_scope() {
+    local scope='Current user'
+    [[ "$CONFIG_DIR" != '/etc/fonts/conf.d' ]] || scope='System-wide'
+    printf '%b%-23s%b %s\n' "$UI_DIM" 'Scope' "$UI_RESET" "$scope"
+}
+
+ui_section() {
+    printf '\n%b%s%b\n' "$UI_BOLD" "$1" "$UI_RESET"
+}
+
+ui_status() {
+    local symbol="$1"
+    local color="$2"
+    local label="$3"
+    local detail="$4"
+    local padded_label
+
+    printf -v padded_label '%-20s' "$label"
+    printf '%b%s%b  %b%s%b %s\n' \
+        "$color" "$symbol" "$UI_RESET" "$UI_BOLD" "$padded_label" "$UI_RESET" "$detail"
+}
+
+ui_info() { ui_status "$UI_INFO" "$UI_CYAN" "$1" "${2:-}"; }
+ui_ok() { ui_status "$UI_OK" "$UI_GREEN" "$1" "${2:-}"; }
+ui_warn() { ui_status '!' "$UI_YELLOW" "$1" "${2:-}"; }
+ui_skip() { ui_status "$UI_SKIP" "$UI_YELLOW" "$1" "${2:-}"; }
+ui_fail() { ui_status "$UI_FAIL" "$UI_RED" "$1" "${2:-}"; }
+
+ui_detail() {
+    printf '   %b%s%b\n' "$UI_DIM" "$1" "$UI_RESET"
+}
+
 die() {
-    printf 'ERROR: %s\n' "$*" >&2
+    if color_enabled 2; then
+        printf '\033[31m%s\033[0m  \033[1mError\033[0m                %s\n' "$UI_FAIL" "$*" >&2
+    else
+        printf '%s  %-20s %s\n' "$UI_FAIL" 'Error' "$*" >&2
+    fi
     exit 1
 }
 
@@ -191,8 +274,10 @@ ensure_noto_fonts() {
     require_command rpm
     if ! rpm -q "$package" >/dev/null 2>&1; then
         require_command dnf
-        printf 'Installing required package: %s\n' "$package"
+        ui_info 'Required package' "Installing $package"
         run_as_root dnf install -y "$package"
+    else
+        ui_ok 'Required package' "$package is installed"
     fi
 }
 
@@ -212,11 +297,13 @@ verify_generated_config() {
     actual=$(<"$file")
     expected=$(generate_fontconfig_xml)
     if [[ "$actual" == "$expected" ]]; then
-        printf '%-18s %s\n' "$label" "current ($file)"
+        ui_ok "$label" 'Current'
+        ui_detail "$file"
         return 0
     fi
 
-    printf '%-18s %s\n' "$label" "stale or incomplete ($file)"
+    ui_fail "$label" 'Stale or incomplete'
+    ui_detail "$file"
     return 1
 }
 
@@ -283,12 +370,12 @@ install_flatpak_override() {
     local marker_created=0 override_status
 
     if ! command -v flatpak >/dev/null 2>&1; then
-        printf '%s\n' 'Flatpak: not installed; skipped integration'
+        ui_skip 'Flatpak integration' 'Flatpak is not installed'
         return
     fi
 
     if flatpak_override_has_fontconfig; then
-        printf '%s\n' 'Flatpak: Fontconfig access already enabled'
+        ui_ok 'Flatpak access' 'Already enabled'
         return
     else
         override_status=$?
@@ -307,7 +394,7 @@ install_flatpak_override() {
         fi
         die "Could not enable Flatpak Fontconfig access"
     fi
-    printf '%s\n' 'Flatpak: enabled read-only Fontconfig access'
+    ui_ok 'Flatpak access' 'Enabled read-only Fontconfig access'
 }
 
 remove_flatpak_override_if_unused() {
@@ -319,14 +406,14 @@ remove_flatpak_override_if_unused() {
         return
     fi
     if ! command -v flatpak >/dev/null 2>&1; then
-        printf '%s\n' 'Flatpak: command unavailable; override was not removed'
+        ui_warn 'Flatpak access' 'Command unavailable; override was not removed'
         return
     fi
 
     run_as_desktop_user flatpak override --user --nofilesystem=xdg-config/fontconfig
     run_as_desktop_user rm -f -- "$FLATPAK_OVERRIDE_MARKER"
     remove_user_state_dir_if_empty "$FLATPAK_STATE_DIR"
-    printf '%s\n' 'Flatpak: removed Fontconfig access'
+    ui_ok 'Flatpak access' 'Removed Fontconfig access'
 }
 
 verify_flatpak() {
@@ -335,34 +422,35 @@ verify_flatpak() {
     local failed=0
 
     if ! command -v flatpak >/dev/null 2>&1; then
-        printf '%-18s %s\n' 'Flatpak' 'not installed'
+        ui_skip 'Flatpak' 'Not installed'
         return
     fi
     if [[ "$CONFIG_DIR" == '/etc/fonts/conf.d' ]]; then
         if is_managed_file "$FLATPAK_BRIDGE_FILE"; then
             verify_generated_config "$FLATPAK_BRIDGE_FILE" 'Flatpak bridge' || failed=1
         else
-            printf '%-18s %s\n' 'Flatpak bridge' "missing ($FLATPAK_BRIDGE_FILE)"
+            ui_fail 'Flatpak bridge' 'Missing'
+            ui_detail "$FLATPAK_BRIDGE_FILE"
             failed=1
         fi
     fi
     if flatpak_override_has_fontconfig; then
-        printf '%-18s %s\n' 'Flatpak access' 'xdg-config/fontconfig enabled'
+        ui_ok 'Flatpak access' 'xdg-config/fontconfig enabled'
     else
         override_status=$?
         if (( override_status == 1 )); then
-            printf '%-18s %s\n' 'Flatpak access' 'missing'
+            ui_fail 'Flatpak access' 'Missing'
         else
-            printf '%-18s %s\n' 'Flatpak access' 'query failed'
+            ui_fail 'Flatpak access' 'Query failed'
         fi
         failed=1
     fi
 
     if ! app_list=$(run_as_desktop_user flatpak list --app --columns=application 2>/dev/null); then
-        printf '%-18s %s\n' 'Flatpak sandbox' 'application query failed'
+        ui_fail 'Flatpak sandbox' 'Application query failed'
         failed=1
     elif [[ -z "$app_list" ]]; then
-        printf '%-18s %s\n' 'Flatpak sandbox' 'not tested (no applications installed)'
+        ui_skip 'Flatpak sandbox' 'Not tested; no applications installed'
     else
         mapfile -t apps <<< "$app_list"
         app=${apps[0]}
@@ -370,16 +458,27 @@ verify_flatpak() {
            serif_match=$(run_as_desktop_user flatpak run --command=fc-match "$app" -f '%{family[0]}|%{file}\n' 'serif' 2>/dev/null) &&
            mono_match=$(run_as_desktop_user flatpak run --command=fc-match "$app" -f '%{family[0]}|%{file}\n' 'monospace' 2>/dev/null) &&
            arabic_match=$(run_as_desktop_user flatpak run --command=fc-match "$app" -f '%{family[0]}|%{file}\n' 'sans-serif:charset=0627' 2>/dev/null) &&
-           devanagari_match=$(run_as_desktop_user flatpak run --command=fc-match "$app" -f '%{family[0]}|%{file}\n' 'sans-serif:charset=0905' 2>/dev/null) &&
-           cjk_match=$(run_as_desktop_user flatpak run --command=fc-match "$app" -f '%{family[0]}|%{file}\n' 'sans-serif:charset=4e2d' 2>/dev/null); then
-            printf '%-18s %s | %s\n' 'Flatpak sandbox' "$app" "$sans_match"
-            printf '%-18s %s\n' 'Flatpak scripts' "$arabic_match | $devanagari_match | $cjk_match"
-            [[ "$sans_match" == Noto\ Sans\|* ]] || failed=1
-            [[ "$serif_match" == Noto\ Serif\|* ]] || failed=1
-            [[ "$mono_match" == Noto\ Sans\ Mono\|* ]] || failed=1
-            [[ "$arabic_match" == Noto\ * && "$devanagari_match" == Noto\ * && "$cjk_match" == Noto\ * ]] || failed=1
+            devanagari_match=$(run_as_desktop_user flatpak run --command=fc-match "$app" -f '%{family[0]}|%{file}\n' 'sans-serif:charset=0905' 2>/dev/null) &&
+            cjk_match=$(run_as_desktop_user flatpak run --command=fc-match "$app" -f '%{family[0]}|%{file}\n' 'sans-serif:charset=4e2d' 2>/dev/null); then
+            if [[ "$sans_match" == Noto\ Sans\|* &&
+                  "$serif_match" == Noto\ Serif\|* &&
+                  "$mono_match" == Noto\ Sans\ Mono\|* ]]; then
+                ui_ok 'Flatpak sandbox' "$app"
+            else
+                ui_fail 'Flatpak sandbox' "$app"
+                failed=1
+            fi
+            ui_detail "sans-serif: $sans_match"
+            ui_detail "serif: $serif_match"
+            ui_detail "monospace: $mono_match"
+            if [[ "$arabic_match" == Noto\ * && "$devanagari_match" == Noto\ * && "$cjk_match" == Noto\ * ]]; then
+                ui_ok 'Flatpak scripts' "$arabic_match | $devanagari_match | $cjk_match"
+            else
+                ui_fail 'Flatpak scripts' "$arabic_match | $devanagari_match | $cjk_match"
+                failed=1
+            fi
         else
-            printf '%-18s %s\n' 'Flatpak sandbox' "verification failed ($app)"
+            ui_fail 'Flatpak sandbox' "Verification failed ($app)"
             failed=1
         fi
     fi
@@ -395,37 +494,63 @@ verify_match() {
     local label="$1"
     local pattern="$2"
     local expected_family="$3"
-    local actual_family
+    local actual_family match
 
     actual_family=$(run_fontconfig fc-match -f '%{family[0]}\n' "$pattern")
-    printf '%-18s %s\n' "$label" "$(first_match "$pattern")"
-    [[ "$actual_family" == "$expected_family" ]]
+    match=$(first_match "$pattern")
+    if [[ "$actual_family" == "$expected_family" ]]; then
+        ui_ok "$label" "$match"
+        return
+    fi
+
+    ui_fail "$label" "$match"
+    ui_detail "Expected: $expected_family"
+    return 1
 }
 
 verify_noto_match() {
     local label="$1"
     local pattern="$2"
-    local actual_family
+    local actual_family match
 
     actual_family=$(run_fontconfig fc-match -f '%{family[0]}\n' "$pattern")
-    printf '%-18s %s\n' "$label" "$(first_match "$pattern")"
-    [[ "$actual_family" == Noto\ * ]]
+    match=$(first_match "$pattern")
+    if [[ "$actual_family" == Noto\ * ]]; then
+        ui_ok "$label" "$match"
+        return
+    fi
+
+    ui_fail "$label" "$match"
+    ui_detail 'Expected: a Noto family'
+    return 1
 }
 
 verify_noto_inventory() {
     local family_count
 
     family_count=$(( ${#NOTO_SANS_FAMILIES[@]} + ${#NOTO_SERIF_FAMILIES[@]} + ${#NOTO_MONO_FAMILIES[@]} + ${#NOTO_OTHER_FAMILIES[@]} ))
-    printf '%-18s %s\n' 'Noto families' "$family_count installed"
-    (( family_count > 0 ))
+    if (( family_count > 0 )); then
+        ui_ok 'Noto families' "$family_count installed"
+        return
+    fi
+
+    ui_fail 'Noto families' 'None installed'
+    return 1
 }
 
 verify_rendering() {
     local actual
 
     actual=$(run_fontconfig fc-match -f '%{antialias}|%{hinting}|%{hintstyle}|%{rgba}|%{lcdfilter}\n' 'sans-serif')
-    printf '%-18s %s\n' 'rendering' "$actual (antialias|hinting|hintstyle|rgba|lcdfilter)"
-    [[ "$actual" == 'True|True|1|1|1' ]]
+    if [[ "$actual" == 'True|True|1|1|1' ]]; then
+        ui_ok 'Rendering' "$actual"
+        ui_detail 'antialias | hinting | hintstyle | rgba | lcdfilter'
+        return
+    fi
+
+    ui_fail 'Rendering' "$actual"
+    ui_detail 'Expected: True | True | 1 | 1 | 1'
+    return 1
 }
 
 verify_emoji() {
@@ -433,8 +558,14 @@ verify_emoji() {
 
     family=$(run_fontconfig fc-match -f '%{family[0]}\n' 'emoji:charset=1f600')
     properties=$(run_fontconfig fc-match -f '%{color}|%{scalable}|%{file}\n' 'emoji:charset=1f600')
-    printf '%-18s %s | %s\n' 'emoji' "$family" "$properties"
-    [[ "$family" == 'Noto Color Emoji' && "$properties" == True\|True\|* ]]
+    if [[ "$family" == 'Noto Color Emoji' && "$properties" == True\|True\|* ]]; then
+        ui_ok 'Emoji' "$family | $properties"
+        return
+    fi
+
+    ui_fail 'Emoji' "$family | $properties"
+    ui_detail 'Expected: Noto Color Emoji with color and scalable enabled'
+    return 1
 }
 
 verify_bitmaps_hidden() {
@@ -442,11 +573,12 @@ verify_bitmaps_hidden() {
 
     matches=$(run_fontconfig fc-list ':outline=false:scalable=false' -f '%{file}\n')
     if [[ -z "$matches" ]]; then
-        printf '%-18s %s\n' 'bitmap fonts' 'hidden'
+        ui_ok 'Bitmap fonts' 'Hidden'
         return 0
     fi
 
-    printf '%-18s %s\n' 'bitmap fonts' "visible ($matches)"
+    ui_fail 'Bitmap fonts' 'Visible'
+    ui_detail "$matches"
     return 1
 }
 
@@ -455,42 +587,52 @@ show_status() {
 
     discover_noto_families
 
+    ui_section 'Configuration'
     if is_managed_config; then
         verify_generated_config "$CONFIG_FILE" 'Config' || failed=1
     elif [[ -e "$CONFIG_FILE" ]]; then
-        printf 'Config: unmanaged file exists (%s)\n' "$CONFIG_FILE"
+        ui_fail 'Config' 'Unmanaged file exists'
+        ui_detail "$CONFIG_FILE"
         failed=1
     else
-        printf 'Config: not installed (%s)\n' "$CONFIG_FILE"
+        ui_fail 'Config' 'Not installed'
+        ui_detail "$CONFIG_FILE"
         failed=1
     fi
     if rpm -q google-noto-fonts-all >/dev/null 2>&1; then
-        printf '%-18s %s\n' 'Noto package' 'google-noto-fonts-all installed'
+        ui_ok 'Noto package' 'google-noto-fonts-all installed'
     else
-        printf '%-18s %s\n' 'Noto package' 'google-noto-fonts-all missing'
+        ui_fail 'Noto package' 'google-noto-fonts-all missing'
         failed=1
     fi
 
-    printf '%s\n' 'Fedora generic fonts:'
+    ui_section 'Generic fonts'
     verify_match 'sans-serif' 'sans-serif' 'Noto Sans' || failed=1
     verify_match 'serif' 'serif' 'Noto Serif' || failed=1
     verify_match 'monospace' 'monospace' 'Noto Sans Mono' || failed=1
 
-    printf '%s\n' 'Noto script coverage:'
+    ui_section 'Script coverage'
     verify_noto_inventory || failed=1
     verify_noto_match 'Arabic' 'sans-serif:charset=0627' || failed=1
     verify_noto_match 'Devanagari' 'sans-serif:charset=0905' || failed=1
     verify_noto_match 'CJK' 'sans-serif:charset=4e2d' || failed=1
 
-    printf '%s\n' 'Policy and rendering:'
+    ui_section 'Policy and rendering'
     verify_bitmaps_hidden || failed=1
     verify_rendering || failed=1
     verify_emoji || failed=1
 
-    printf '%s\n' 'Flatpak integration:'
+    ui_section 'Flatpak integration'
     verify_flatpak || failed=1
 
-    (( failed == 0 )) || die "Font configuration verification failed"
+    printf '\n'
+    if (( failed == 0 )); then
+        ui_ok 'Verification' 'All checks passed'
+        return
+    fi
+
+    ui_fail 'Verification' 'Completed with issues'
+    return 1
 }
 
 install_fix() {
@@ -498,12 +640,21 @@ install_fix() {
     ensure_noto_fonts
     discover_noto_families
     write_config
+    ui_ok 'Fontconfig file' 'Written'
+    ui_detail "$CONFIG_FILE"
     if [[ "$CONFIG_DIR" == '/etc/fonts/conf.d' ]]; then
         write_flatpak_bridge
+        ui_ok 'Flatpak bridge' 'Written'
+        ui_detail "$FLATPAK_BRIDGE_FILE"
     fi
     install_flatpak_override
+    ui_info 'Font cache' 'Refreshing'
     refresh_font_cache
+    ui_section 'Verification'
     show_status
+    printf '\n'
+    ui_ok 'Installation' 'Complete'
+    ui_detail 'Restart open applications to apply the new fonts.'
 }
 
 uninstall_fix() {
@@ -515,16 +666,21 @@ uninstall_fix() {
         else
             run_as_desktop_user rm -f -- "$CONFIG_FILE"
         fi
-        printf 'Removed: %s\n' "$CONFIG_FILE"
+        ui_ok 'Removed config' "$CONFIG_FILE"
     else
-        printf 'Config is already absent: %s\n' "$CONFIG_FILE"
+        ui_skip 'Config' 'Already absent'
+        ui_detail "$CONFIG_FILE"
     fi
 
     if [[ "$CONFIG_DIR" == '/etc/fonts/conf.d' && -e "$FLATPAK_BRIDGE_FILE" ]]; then
         run_as_desktop_user rm -f -- "$FLATPAK_BRIDGE_FILE"
-        printf 'Removed: %s\n' "$FLATPAK_BRIDGE_FILE"
+        ui_ok 'Removed bridge' "$FLATPAK_BRIDGE_FILE"
     fi
 
     remove_flatpak_override_if_unused
+    ui_info 'Font cache' 'Refreshing'
     refresh_font_cache
+    printf '\n'
+    ui_ok 'Uninstall' 'Complete'
+    ui_detail 'Installed Noto font packages were kept.'
 }

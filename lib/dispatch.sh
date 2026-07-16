@@ -10,9 +10,35 @@ cleanup() {
 
 trap cleanup EXIT
 
+color_enabled() {
+    [[ -t "$1" && -z "${NO_COLOR+x}" && "${TERM:-dumb}" != 'dumb' ]]
+}
+
 die() {
-    printf 'ERROR: %s\n' "$*" >&2
+    local charmap
+    local symbol='X'
+    charmap=$(locale charmap 2>/dev/null) || charmap=''
+    charmap=${charmap,,}
+    [[ "$charmap" != 'utf-8' && "$charmap" != 'utf8' ]] || symbol='✗'
+    if color_enabled 2; then
+        printf '\033[31m%s\033[0m  \033[1mError\033[0m                %s\n' "$symbol" "$*" >&2
+    else
+        printf '%s  %-20s %s\n' "$symbol" 'Error' "$*" >&2
+    fi
     exit 1
+}
+
+print_info() {
+    local charmap
+    local symbol='*'
+    charmap=$(locale charmap 2>/dev/null) || charmap=''
+    charmap=${charmap,,}
+    [[ "$charmap" != 'utf-8' && "$charmap" != 'utf8' ]] || symbol='●'
+    if color_enabled 1; then
+        printf '\033[36m%s\033[0m  \033[1m%-20s\033[0m %s\n' "$symbol" "$1" "$2"
+    else
+        printf '%s  %-20s %s\n' "$symbol" "$1" "$2"
+    fi
 }
 
 require_command() {
@@ -50,7 +76,7 @@ run_action() {
     require_command mktemp
     TEMPORARY_DIR=$(mktemp -d) || die "Could not create a temporary directory"
 
-    printf 'Loading %s %s script...\n' "$distro" "$action"
+    print_info 'Loading scripts' "$distro $action"
     curl -fsSL "$RAW_BASE_URL/$relative_dir/common.sh" -o "$TEMPORARY_DIR/common.sh"
     curl -fsSL "$RAW_BASE_URL/$relative_dir/$action.sh" -o "$TEMPORARY_DIR/$action.sh"
     bash "$TEMPORARY_DIR/$action.sh" "$@"
