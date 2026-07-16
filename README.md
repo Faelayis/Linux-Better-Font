@@ -30,10 +30,7 @@ Use `--root` to install the configuration system-wide for all users:
 curl -fsSL https://raw.githubusercontent.com/faelayis/Linux-Better-Font/main/install.sh | bash -s -- --root
 ```
 
-If Flatpak is installed, the installer also grants applications read-only access
-to the current user's Fontconfig directory. A `--root` installation creates a
-managed user-side bridge because Flatpak applications cannot read the host's
-`/etc/fonts/conf.d` directly.
+Flatpak applications are configured automatically when Flatpak is installed.
 
 Fully close and reopen native and Flatpak applications after installation.
 
@@ -49,9 +46,7 @@ Check the system-wide configuration with `--root`:
 curl -fsSL https://raw.githubusercontent.com/faelayis/Linux-Better-Font/main/status.sh | bash -s -- --root
 ```
 
-The status command checks the managed Fontconfig file, Noto package and font
-matches, rendering policy, and Flatpak integration. When a Flatpak application is
-installed, it also verifies representative Noto matches inside the sandbox.
+The status command verifies the font configuration and Flatpak integration.
 
 ## Uninstall
 
@@ -65,7 +60,5 @@ Remove the system-wide configuration with `--root`:
 curl -fsSL https://raw.githubusercontent.com/faelayis/Linux-Better-Font/main/uninstall.sh | bash -s -- --root
 ```
 
-Removal restores the previous Fontconfig behavior but keeps the installed Noto
-packages. The Flatpak permission is removed only if this project added it and no
-managed user or bridge configuration still needs it. Flatpak records this removal
-as an explicit denial for that path; unrelated Flatpak overrides are preserved.
+Uninstall restores the previous font behavior but keeps the installed Noto
+packages.
